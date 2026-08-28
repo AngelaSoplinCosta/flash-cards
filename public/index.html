@@ -1,0 +1,132 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Flash Cards</title>
+<link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <h1>Flash Cards</h1>
+    <div class="topbar-actions">
+      <button id="theme-toggle" class="icon-btn" title="Cambiar tema" aria-label="Cambiar tema">&#9788;</button>
+    </div>
+  </header>
+
+  <nav class="tabs">
+    <button class="tab-btn active" data-view="list">Mis tarjetas</button>
+    <button class="tab-btn" data-view="study">Estudiar</button>
+  </nav>
+
+  <main>
+    <!-- ---------- Vista: Lista ---------- -->
+    <section id="view-list" class="view active">
+      <div class="toolbar">
+        <select id="deck-filter"></select>
+        <input id="search-input" type="search" placeholder="Buscar en preguntas o respuestas..." />
+        <button id="new-deck-btn" class="btn btn-ghost">+ Mazo</button>
+        <button id="new-card-btn" class="btn btn-primary">+ Tarjeta</button>
+      </div>
+
+      <div id="card-list" class="card-list"></div>
+      <p id="empty-state" class="empty-state hidden">No hay tarjetas todavía. Crea la primera con "+ Tarjeta".</p>
+    </section>
+
+    <!-- ---------- Vista: Estudio ---------- -->
+    <section id="view-study" class="view">
+      <div class="toolbar">
+        <select id="study-deck-filter"></select>
+        <button id="shuffle-btn" class="btn btn-ghost">&#128256; Mezclar</button>
+        <span id="study-progress" class="study-progress"></span>
+      </div>
+
+      <div id="study-empty" class="empty-state hidden">No hay tarjetas para estudiar en este mazo.</div>
+
+      <div id="study-area" class="study-area">
+        <div id="flashcard" class="flashcard">
+          <div class="flashcard-inner">
+            <div class="flashcard-face flashcard-front">
+              <div class="face-label">Pregunta</div>
+              <div id="study-question" class="face-content markdown-body"></div>
+              <div class="tap-hint">Toca la tarjeta para ver la respuesta</div>
+            </div>
+            <div class="flashcard-face flashcard-back">
+              <div class="face-label">Respuesta</div>
+              <div id="study-answer" class="face-content markdown-body"></div>
+              <div class="tap-hint">Toca para volver a la pregunta</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="study-controls">
+          <button id="prev-btn" class="btn btn-ghost">&larr; Anterior</button>
+          <button id="flip-btn" class="btn btn-primary">Voltear</button>
+          <button id="next-btn" class="btn btn-ghost">Siguiente &rarr;</button>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <!-- ---------- Modal: crear/editar tarjeta ---------- -->
+  <div id="card-modal" class="modal-backdrop hidden">
+    <div class="modal">
+      <h2 id="card-modal-title">Nueva tarjeta</h2>
+      <form id="card-form">
+        <input type="hidden" id="card-id" />
+
+        <label for="card-deck">Mazo</label>
+        <select id="card-deck" required></select>
+
+        <div class="field-with-preview">
+          <div>
+            <label for="card-question">Pregunta / Enunciado (admite Markdown)</label>
+            <textarea id="card-question" rows="4" required placeholder="Ej: ¿Qué es una **API REST**?"></textarea>
+          </div>
+          <div class="preview-box">
+            <span class="preview-label">Vista previa</span>
+            <div id="preview-question" class="markdown-body"></div>
+          </div>
+        </div>
+
+        <div class="field-with-preview">
+          <div>
+            <label for="card-answer">Respuesta / Más información (admite Markdown)</label>
+            <textarea id="card-answer" rows="6" required placeholder="Ej: Es una interfaz que usa HTTP..."></textarea>
+          </div>
+          <div class="preview-box">
+            <span class="preview-label">Vista previa</span>
+            <div id="preview-answer" class="markdown-body"></div>
+          </div>
+        </div>
+
+        <div class="modal-actions">
+          <button type="button" id="card-cancel-btn" class="btn btn-ghost">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Guardar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ---------- Modal: nuevo mazo ---------- -->
+  <div id="deck-modal" class="modal-backdrop hidden">
+    <div class="modal modal-small">
+      <h2>Nuevo mazo</h2>
+      <form id="deck-form">
+        <label for="deck-name">Nombre</label>
+        <input id="deck-name" type="text" required placeholder="Ej: Historia" />
+        <div class="modal-actions">
+          <button type="button" id="deck-cancel-btn" class="btn btn-ghost">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Crear</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/vendor/marked.min.js"></script>
+  <script src="/vendor/purify.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
