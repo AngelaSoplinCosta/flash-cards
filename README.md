@@ -6,12 +6,13 @@ local en SQLite.
 ## Requisitos
 
 - Node.js 18+
+- [pnpm](https://pnpm.io/) 9+
 
 ## Instalación y uso
 
 ```bash
-npm install
-npm start
+pnpm install
+pnpm start
 ```
 
 Abre `http://localhost:3000` en el navegador.
