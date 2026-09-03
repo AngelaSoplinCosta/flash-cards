@@ -24,8 +24,11 @@
     <section id="view-list" class="view active">
       <div class="toolbar">
         <select id="deck-filter"></select>
+        <select id="tag-filter" aria-label="Filtrar por etiqueta"></select>
         <input id="search-input" type="search" placeholder="Buscar en preguntas o respuestas..." />
+        <button id="new-tag-btn" class="btn btn-ghost">+ Etiqueta</button>
         <button id="new-deck-btn" class="btn btn-ghost">+ Mazo</button>
+        <button id="edit-deck-btn" class="btn btn-ghost" disabled>Editar mazo</button>
         <button id="new-card-btn" class="btn btn-primary">+ Tarjeta</button>
       </div>
 
@@ -37,13 +40,20 @@
     <section id="view-study" class="view">
       <div class="toolbar">
         <select id="study-deck-filter"></select>
+        <select id="study-tag-filter" aria-label="Filtrar por etiqueta"></select>
         <button id="shuffle-btn" class="btn btn-ghost">&#128256; Mezclar</button>
         <span id="study-progress" class="study-progress"></span>
       </div>
 
-      <div id="study-empty" class="empty-state hidden">No hay tarjetas para estudiar en este mazo.</div>
+      <div id="study-empty" class="empty-state hidden">No hay tarjetas que coincidan con los filtros.</div>
 
       <div id="study-area" class="study-area">
+        <div class="study-controls">
+          <button id="prev-btn" class="btn btn-ghost">&larr; Anterior</button>
+          <button id="flip-btn" class="btn btn-primary">Voltear</button>
+          <button id="next-btn" class="btn btn-ghost">Siguiente &rarr;</button>
+        </div>
+
         <div id="flashcard" class="flashcard">
           <div class="flashcard-inner">
             <div class="flashcard-face flashcard-front">
@@ -52,17 +62,28 @@
               <div class="tap-hint">Toca la tarjeta para ver la respuesta</div>
             </div>
             <div class="flashcard-face flashcard-back">
-              <div class="face-label">Respuesta</div>
+              <div class="answer-header">
+                <div class="face-label">Respuesta</div>
+                <button
+                  id="answer-expand-btn"
+                  class="answer-expand-btn"
+                  type="button"
+                  aria-label="Ampliar respuesta"
+                  aria-expanded="false"
+                  title="Ampliar respuesta"
+                >
+                  <svg class="expand-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" />
+                  </svg>
+                  <svg class="collapse-icon" viewBox="0 0 24 24" aria-hidden="true">
+                    <path d="M3 9h6V3M21 9h-6V3M3 15h6v6M21 15h-6v6" />
+                  </svg>
+                </button>
+              </div>
               <div id="study-answer" class="face-content markdown-body"></div>
               <div class="tap-hint">Toca para volver a la pregunta</div>
             </div>
           </div>
-        </div>
-
-        <div class="study-controls">
-          <button id="prev-btn" class="btn btn-ghost">&larr; Anterior</button>
-          <button id="flip-btn" class="btn btn-primary">Voltear</button>
-          <button id="next-btn" class="btn btn-ghost">Siguiente &rarr;</button>
         </div>
       </div>
     </section>
@@ -70,13 +91,29 @@
 
   <!-- ---------- Modal: crear/editar tarjeta ---------- -->
   <div id="card-modal" class="modal-backdrop hidden">
-    <div class="modal">
-      <h2 id="card-modal-title">Nueva tarjeta</h2>
+    <div class="modal card-editor-modal">
+      <div class="card-modal-header">
+        <h2 id="card-modal-title">Nueva tarjeta</h2>
+        <div class="card-modal-actions">
+          <button type="button" id="card-cancel-btn" class="btn btn-ghost">Cancelar</button>
+          <button type="submit" form="card-form" class="btn btn-primary">Guardar</button>
+        </div>
+      </div>
       <form id="card-form">
         <input type="hidden" id="card-id" />
 
         <label for="card-deck">Mazo</label>
         <select id="card-deck" required></select>
+
+        <label for="card-tag-picker">Etiquetas</label>
+        <div class="tag-picker-row">
+          <select id="card-tag-picker">
+            <option value="">Selecciona una etiqueta...</option>
+          </select>
+          <button type="button" id="card-new-tag-btn" class="btn btn-ghost">+ Nueva etiqueta</button>
+        </div>
+        <div id="card-selected-tags" class="tag-chips selected-tag-chips" aria-live="polite"></div>
+        <div class="field-help">Puedes seleccionar varias. Pulsa × en un chip para quitarlo.</div>
 
         <div class="field-with-preview">
           <div>
@@ -100,23 +137,36 @@
           </div>
         </div>
 
+      </form>
+    </div>
+  </div>
+
+  <!-- ---------- Modal: crear/editar mazo ---------- -->
+  <div id="deck-modal" class="modal-backdrop hidden">
+    <div class="modal modal-small">
+      <h2 id="deck-modal-title">Nuevo mazo</h2>
+      <form id="deck-form">
+        <input type="hidden" id="deck-id" />
+        <label for="deck-name">Nombre</label>
+        <input id="deck-name" type="text" required placeholder="Ej: Historia" />
         <div class="modal-actions">
-          <button type="button" id="card-cancel-btn" class="btn btn-ghost">Cancelar</button>
-          <button type="submit" class="btn btn-primary">Guardar</button>
+          <button type="button" id="deck-delete-btn" class="btn btn-danger hidden">Eliminar</button>
+          <button type="button" id="deck-cancel-btn" class="btn btn-ghost">Cancelar</button>
+          <button type="submit" id="deck-save-btn" class="btn btn-primary">Crear</button>
         </div>
       </form>
     </div>
   </div>
 
-  <!-- ---------- Modal: nuevo mazo ---------- -->
-  <div id="deck-modal" class="modal-backdrop hidden">
+  <!-- ---------- Modal: nueva etiqueta ---------- -->
+  <div id="tag-modal" class="modal-backdrop hidden">
     <div class="modal modal-small">
-      <h2>Nuevo mazo</h2>
-      <form id="deck-form">
-        <label for="deck-name">Nombre</label>
-        <input id="deck-name" type="text" required placeholder="Ej: Historia" />
+      <h2>Nueva etiqueta</h2>
+      <form id="tag-form">
+        <label for="tag-name">Nombre</label>
+        <input id="tag-name" type="text" maxlength="40" required placeholder="Ej: IAM" />
         <div class="modal-actions">
-          <button type="button" id="deck-cancel-btn" class="btn btn-ghost">Cancelar</button>
+          <button type="button" id="tag-cancel-btn" class="btn btn-ghost">Cancelar</button>
           <button type="submit" class="btn btn-primary">Crear</button>
         </div>
       </form>

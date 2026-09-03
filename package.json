@@ -2,6 +2,11 @@
   "name": "flash-cards",
   "version": "1.0.0",
   "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=18",
+    "pnpm": ">=9"
+  },
   "description": "Web minimalista para estudiar con flashcards en Markdown, con almacenamiento local en SQLite.",
   "main": "server.js",
   "scripts": {

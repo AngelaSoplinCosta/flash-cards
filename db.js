@@ -25,7 +25,20 @@ db.exec(`
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
   );
 
+  CREATE TABLE IF NOT EXISTS tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL COLLATE NOCASE UNIQUE,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
+
+  CREATE TABLE IF NOT EXISTS card_tags (
+    card_id INTEGER NOT NULL REFERENCES cards(id) ON DELETE CASCADE,
+    tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (card_id, tag_id)
+  );
+
   CREATE INDEX IF NOT EXISTS idx_cards_deck_id ON cards(deck_id);
+  CREATE INDEX IF NOT EXISTS idx_card_tags_tag_id ON card_tags(tag_id);
 `);
 
 const deckCount = db.prepare('SELECT COUNT(*) AS n FROM decks').get().n;
