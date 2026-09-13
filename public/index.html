@@ -10,16 +10,38 @@
   <header class="topbar">
     <h1>Flash Cards</h1>
     <div class="topbar-actions">
+      <span id="current-user" class="hidden"></span>
+      <button id="logout-btn" class="btn btn-ghost hidden" type="button">Cerrar sesión</button>
       <button id="theme-toggle" class="icon-btn" title="Cambiar tema" aria-label="Cambiar tema">&#9788;</button>
     </div>
   </header>
 
-  <nav class="tabs">
+  <section id="auth-panel" class="auth-panel" aria-labelledby="auth-title">
+    <h2 id="auth-title">Iniciar sesión</h2>
+    <p class="field-help">Accede con tu usuario y contraseña.</p>
+    <form id="auth-form">
+      <label for="auth-username">Usuario</label>
+      <input id="auth-username" name="username" type="text" autocomplete="username" minlength="3" maxlength="32" pattern="[A-Za-z0-9_]{3,32}" autocapitalize="none" spellcheck="false" required aria-describedby="username-help" />
+      <p id="username-help" class="field-help">De 3 a 32 letras, números o guiones bajos.</p>
+      <label for="auth-password">Contraseña</label>
+      <input id="auth-password" name="password" type="password" autocomplete="current-password" maxlength="128" required aria-describedby="password-help" />
+      <p id="password-help" class="field-help hidden">Usa una frase de al menos 15 caracteres. Guarda tu contraseña: todavía no hay recuperación automática.</p>
+      <div id="auth-confirm-field" class="hidden">
+        <label for="auth-confirm">Confirmar contraseña</label>
+        <input id="auth-confirm" type="password" autocomplete="new-password" maxlength="128" />
+      </div>
+      <p id="auth-error" class="auth-error" role="alert"></p>
+      <button id="auth-submit" class="btn btn-primary" type="submit">Entrar</button>
+      <button id="auth-switch" class="btn btn-ghost" type="button">Crear una cuenta</button>
+    </form>
+  </section>
+
+  <nav class="tabs hidden" id="app-tabs">
     <button class="tab-btn active" data-view="list">Mis tarjetas</button>
     <button class="tab-btn" data-view="study">Estudiar</button>
   </nav>
 
-  <main>
+  <main id="app-main" class="hidden">
     <!-- ---------- Vista: Lista ---------- -->
     <section id="view-list" class="view active">
       <div class="toolbar">

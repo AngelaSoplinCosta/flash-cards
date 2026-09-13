@@ -1,6 +1,10 @@
 (() => {
   'use strict';
 
+  let csrfToken = null;
+  let registering = false;
+  let authVersion = 0;
+
   const state = {
     decks: [],
     tags: [],
@@ -90,20 +94,26 @@
   }
 
   async function api(url, options = {}) {
+    const version = authVersion;
     const res = await fetch(url, {
-      headers: { 'Content-Type': 'application/json' },
       ...options,
+      credentials: 'same-origin',
+      headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'flashcards', ...(csrfToken ? { 'X-CSRF-Token': csrfToken } : {}), ...options.headers },
     });
+    if (version !== authVersion) throw new Error('La sesión cambió. Repite la operación.');
+    if (res.status === 401 && !url.startsWith('/api/auth/login')) showAuth();
     if (!res.ok) {
       let message = 'Ocurrió un error.';
       try {
         const body = await res.json();
         message = body.error || message;
       } catch (_) { /* no-op */ }
-      throw new Error(message);
+      throw Object.assign(new Error(message), { status: res.status });
     }
     if (res.status === 204) return null;
-    return res.json();
+    const body = await res.json();
+    if (version !== authVersion) throw new Error('La sesión cambió. Repite la operación.');
+    return body;
   }
 
   function shuffle(arr) {
@@ -617,16 +627,103 @@
 
   // ---------- Init ----------
 
+  const authForm = document.getElementById('auth-form');
+  const authError = document.getElementById('auth-error');
+  const authPassword = document.getElementById('auth-password');
+  const authConfirm = document.getElementById('auth-confirm');
+  const authSubmit = document.getElementById('auth-submit');
+  const authSwitch = document.getElementById('auth-switch');
+
+  function showAuth() {
+    authVersion++;
+    csrfToken = null;
+    state.cards = [];
+    state.decks = [];
+    state.tags = [];
+    state.studyQueue = [];
+    state.studyIndex = 0;
+    state.selectCreatedTagForCard = false;
+    state.selectedCardTagIds.clear();
+    els.cardList.replaceChildren();
+    els.studyQuestion.replaceChildren();
+    els.studyAnswer.replaceChildren();
+    els.studyProgress.textContent = '';
+    els.cardForm.reset();
+    els.deckForm.reset();
+    els.tagForm.reset();
+    els.previewQuestion.replaceChildren();
+    els.previewAnswer.replaceChildren();
+    els.cardSelectedTags.replaceChildren();
+    els.searchInput.value = '';
+    [els.deckFilter, els.studyDeckFilter, els.tagFilter, els.studyTagFilter, els.cardDeck, els.cardTagPicker].forEach((select) => select.replaceChildren());
+    els.tabs.forEach((tab) => tab.classList.toggle('active', tab.dataset.view === 'list'));
+    els.views.forEach((view) => view.classList.toggle('active', view.id === 'view-list'));
+    authForm.reset();
+    document.querySelectorAll('.modal-backdrop').forEach((modal) => modal.classList.add('hidden'));
+    document.getElementById('auth-panel').classList.remove('hidden');
+    ['app-main', 'app-tabs', 'current-user', 'logout-btn'].forEach((id) => document.getElementById(id).classList.add('hidden'));
+    document.getElementById('current-user').textContent = '';
+  }
+
+  async function showApp(session) {
+    const version = ++authVersion;
+    csrfToken = session.csrfToken;
+    document.getElementById('current-user').textContent = session.user.username;
+    const results = await Promise.allSettled([loadDecks(), loadTags()]);
+    if (version !== authVersion) return;
+    if (results.some((result) => result.status === 'rejected')) {
+      throw new Error('No se pudieron cargar los datos. Recarga la página.');
+    }
+    await loadCards();
+    if (version !== authVersion) return;
+    document.getElementById('auth-panel').classList.add('hidden');
+    ['app-main', 'app-tabs', 'current-user', 'logout-btn'].forEach((id) => document.getElementById(id).classList.remove('hidden'));
+  }
+
+  authSwitch.addEventListener('click', () => {
+    registering = !registering;
+    authError.textContent = '';
+    authPassword.value = '';
+    authConfirm.value = '';
+    authPassword.autocomplete = registering ? 'new-password' : 'current-password';
+    authPassword.minLength = registering ? 15 : 1;
+    authConfirm.required = registering;
+    document.getElementById('auth-confirm-field').classList.toggle('hidden', !registering);
+    document.getElementById('password-help').classList.toggle('hidden', !registering);
+    document.getElementById('auth-title').textContent = registering ? 'Crear cuenta' : 'Iniciar sesión';
+    authSubmit.textContent = registering ? 'Registrarme' : 'Entrar';
+    authSwitch.textContent = registering ? 'Ya tengo una cuenta' : 'Crear una cuenta';
+  });
+  authForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    authError.textContent = '';
+    if (registering && authPassword.value !== authConfirm.value) {
+      authError.textContent = 'Las contraseñas no coinciden.';
+      return;
+    }
+    authSubmit.disabled = true;
+    authSwitch.disabled = true;
+    try {
+      const session = await api(`/api/auth/${registering ? 'register' : 'login'}`, {
+        method: 'POST',
+        body: JSON.stringify({ username: document.getElementById('auth-username').value, password: authPassword.value }),
+      });
+      authForm.reset();
+      await showApp(session);
+    } catch (error) { authError.textContent = error.message; }
+    finally { authSubmit.disabled = false; authSwitch.disabled = false; }
+  });
+  document.getElementById('logout-btn').addEventListener('click', async () => {
+    try {
+      await api('/api/auth/logout', { method: 'POST', body: '{}' });
+      // A reload also discards any outstanding data requests and editor contents.
+      window.location.reload();
+    } catch (error) { showToast(error.message); }
+  });
+
   initTheme();
   (async function init() {
-    const results = await Promise.allSettled([loadDecks(), loadTags()]);
-    if (results.some((result) => result.status === 'rejected')) {
-      showToast('No se pudieron cargar todos los datos. Reinicia el servidor.');
-    }
-    try {
-      await loadCards();
-    } catch (err) {
-      showToast(err.message);
-    }
+    try { await showApp(await api('/api/auth/me')); }
+    catch (error) { if (error.status !== 401) authError.textContent = error.message; }
   })();
 })();

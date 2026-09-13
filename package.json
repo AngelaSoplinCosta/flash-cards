@@ -7,21 +7,32 @@
     "node": ">=18",
     "pnpm": ">=9"
   },
-  "description": "Web minimalista para estudiar con flashcards en Markdown, con almacenamiento local en SQLite.",
+  "description": "Web minimalista para estudiar con flashcards en Markdown, con almacenamiento en PostgreSQL.",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
+    "db:migrate": "node scripts/migrate-db.js",
+    "db:import-sqlite": "node scripts/import-sqlite.js",
+    "auth:claim-legacy": "node scripts/claim-legacy.js",
+    "test": "node --test",
     "postinstall": "node scripts/copy-vendor.js"
   },
   "dependencies": {
-    "better-sqlite3": "^11.10.0",
     "dompurify": "^3.1.7",
+    "dotenv": "^17.4.2",
     "express": "^4.21.1",
-    "marked": "^13.0.3"
+    "marked": "^13.0.3",
+    "pg": "^8.23.0"
   },
   "pnpm": {
+    "overrides": {
+      "qs": "^6.16.0"
+    },
     "onlyBuiltDependencies": [
       "better-sqlite3"
     ]
+  },
+  "devDependencies": {
+    "better-sqlite3": "^11.10.0"
   }
 }

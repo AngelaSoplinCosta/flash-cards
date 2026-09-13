@@ -1,256 +1,218 @@
 const path = require('path');
 const express = require('express');
-const db = require('./db');
+const { createDatabase } = require('./db');
+const { createRepository, foldTag } = require('./repository');
+const { createAuth } = require('./auth');
 
-const app = express();
-const PORT = process.env.PORT || 3000;
+function badRequest(message) {
+  return Object.assign(new Error(message), { status: 400 });
+}
 
-app.use(express.json());
-app.use(express.static(path.join(__dirname, 'public')));
+function readId(value, optional = false) {
+  if (optional && (value === undefined || value === null || value === '')) return undefined;
+  if (!['number', 'string'].includes(typeof value) || !/^[1-9]\d*$/.test(String(value))) {
+    throw badRequest('El identificador debe ser un entero positivo.');
+  }
+  const id = Number(value);
+  if (!Number.isSafeInteger(id) || id > 2147483647) throw badRequest('El identificador está fuera de rango.');
+  return id;
+}
 
-const insertTag = db.prepare('INSERT INTO tags (name) VALUES (?) ON CONFLICT(name) DO NOTHING');
-const findTag = db.prepare('SELECT id FROM tags WHERE name = ? COLLATE NOCASE');
-const linkTag = db.prepare('INSERT INTO card_tags (card_id, tag_id) VALUES (?, ?)');
+function readText(value, message) {
+  if (typeof value !== 'string' || !value.trim()) throw badRequest(message);
+  return value.trim();
+}
 
 function normalizeTags(value) {
   if (value === undefined) return undefined;
-  const values = Array.isArray(value)
-    ? value
-    : (typeof value === 'string' ? value.split(',') : null);
-
-  if (!values) throw new Error('Las etiquetas deben enviarse como una lista o separadas por comas.');
-
+  const values = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : null;
+  if (!values) throw badRequest('Las etiquetas deben enviarse como una lista o separadas por comas.');
   const unique = new Map();
-  for (const rawValue of values) {
-    if (rawValue === null || rawValue === undefined) continue;
-    const name = String(rawValue).trim();
+  for (const raw of values) {
+    if (raw === null || raw === undefined) continue;
+    if (typeof raw !== 'string') throw badRequest('Cada etiqueta debe ser texto.');
+    const name = raw.trim();
     if (!name) continue;
-    if (name.length > 40) throw new Error('Cada etiqueta puede tener hasta 40 caracteres.');
-    const key = name.toLocaleLowerCase('es');
+    if (name.length > 40) throw badRequest('Cada etiqueta puede tener hasta 40 caracteres.');
+    const key = foldTag(name);
     if (!unique.has(key)) unique.set(key, name);
   }
-
   return [...unique.values()];
 }
 
-function replaceCardTags(cardId, tagNames) {
-  db.prepare('DELETE FROM card_tags WHERE card_id = ?').run(cardId);
-  for (const name of tagNames) {
-    insertTag.run(name);
-    linkTag.run(cardId, findTag.get(name).id);
+const asyncRoute = (handler) => (req, res, next) => Promise.resolve().then(() => handler(req, res)).catch(next);
+
+function createApp(db, config = {}) {
+  const app = express();
+  const auth = createAuth(db, config);
+  app.disable('x-powered-by');
+  // Enable only for a known, single reverse proxy (e.g. Render).
+  if ((config.trustProxy ?? process.env.TRUST_PROXY) === '1') app.set('trust proxy', 1);
+  app.use((req, res, next) => {
+    res.set({
+      'X-Content-Type-Options': 'nosniff',
+      'X-Frame-Options': 'DENY',
+      'Referrer-Policy': 'same-origin',
+      'Content-Security-Policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' https: data:; connect-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'",
+    });
+    if ((config.nodeEnv ?? process.env.NODE_ENV) === 'production') res.set('Strict-Transport-Security', 'max-age=31536000');
+    next();
+  });
+  app.use('/api', (req, res, next) => { res.set('Cache-Control', 'no-store'); next(); }, auth.sameOrigin);
+  app.use(express.json({ limit: '100kb' }));
+  app.use(express.static(path.join(__dirname, 'public')));
+  app.use('/api', (req, res, next) => {
+    if (['POST', 'PUT'].includes(req.method) && (!req.body || Array.isArray(req.body) || typeof req.body !== 'object')) {
+      return res.status(400).json({ error: 'El cuerpo debe ser un objeto JSON.' });
+    }
+    next();
+  });
+  app.use('/api/auth', auth.router);
+  app.use('/api', auth.authenticate, auth.csrf, (req, res, next) => {
+    req.repo = createRepository(db, req.user.id);
+    next();
+  });
+
+  app.get('/api/decks', asyncRoute(async (req, res) => res.json(await req.repo.listDecks())));
+  app.post('/api/decks', asyncRoute(async (req, res) => {
+    const name = readText(req.body.name, 'El nombre del mazo es obligatorio.');
+    try {
+      res.status(201).json(await req.repo.createDeck(name));
+    } catch (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'Ya existe un mazo con ese nombre.' });
+      throw error;
+    }
+  }));
+  app.put('/api/decks/:id', asyncRoute(async (req, res) => {
+    const id = readId(req.params.id);
+    const name = readText(req.body.name, 'El nombre del mazo es obligatorio.');
+    try {
+      const deck = await req.repo.updateDeck(id, name);
+      if (!deck) return res.status(404).json({ error: 'Mazo no encontrado.' });
+      res.json(deck);
+    } catch (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'Ya existe un mazo con ese nombre.' });
+      throw error;
+    }
+  }));
+  app.delete('/api/decks/:id', asyncRoute(async (req, res) => {
+    const result = await req.repo.deleteDeck(readId(req.params.id));
+    if (result === 'missing') return res.status(404).json({ error: 'Mazo no encontrado.' });
+    if (result === 'last') return res.status(400).json({ error: 'Debe existir al menos un mazo.' });
+    res.status(204).end();
+  }));
+
+  app.get('/api/tags', asyncRoute(async (req, res) => res.json(await req.repo.listTags())));
+  app.post('/api/tags', asyncRoute(async (req, res) => {
+    const names = normalizeTags([readText(req.body.name, 'El nombre de la etiqueta es obligatorio.')]);
+    try {
+      res.status(201).json(await req.repo.createTag(names[0]));
+    } catch (error) {
+      if (error.code === '23505') return res.status(409).json({ error: 'Ya existe una etiqueta con ese nombre.' });
+      throw error;
+    }
+  }));
+
+  app.get('/api/cards', asyncRoute(async (req, res) => {
+    const deck_id = readId(req.query.deck_id, true);
+    const tag_id = readId(req.query.tag_id, true);
+    const q = req.query.q;
+    if (q !== undefined && typeof q !== 'string') throw badRequest('La búsqueda debe ser texto.');
+    res.json(await req.repo.listCards({ deck_id, tag_id, q }));
+  }));
+  app.post('/api/cards', asyncRoute(async (req, res) => {
+    const card = await req.repo.createCard({
+      deck_id: readId(req.body.deck_id, true),
+      question: readText(req.body.question, 'La pregunta y la respuesta son obligatorias.'),
+      answer: readText(req.body.answer, 'La pregunta y la respuesta son obligatorias.'),
+      tags: normalizeTags(req.body.tags) || [],
+    });
+    if (!card) return res.status(400).json({ error: 'El mazo indicado no existe.' });
+    res.status(201).json(card);
+  }));
+  app.put('/api/cards/:id', asyncRoute(async (req, res) => {
+    const patch = { tags: normalizeTags(req.body.tags) };
+    if (req.body.deck_id !== undefined && req.body.deck_id !== null) patch.deck_id = readId(req.body.deck_id);
+    for (const field of ['question', 'answer']) {
+      if (req.body[field] !== undefined && req.body[field] !== null) {
+        patch[field] = readText(req.body[field], 'La pregunta y la respuesta son obligatorias.');
+      }
+    }
+    const result = await req.repo.updateCard(readId(req.params.id), patch);
+    if (result.status === 'missing') return res.status(404).json({ error: 'Tarjeta no encontrada.' });
+    if (result.status === 'invalid-deck') return res.status(400).json({ error: 'El mazo indicado no existe.' });
+    res.json(result.card);
+  }));
+  app.delete('/api/cards/:id', asyncRoute(async (req, res) => {
+    if (!await req.repo.deleteCard(readId(req.params.id))) return res.status(404).json({ error: 'Tarjeta no encontrada.' });
+    res.status(204).end();
+  }));
+
+  app.use((error, req, res, next) => {
+    if (res.headersSent) return next(error);
+    if (error.type === 'entity.parse.failed') return res.status(400).json({ error: 'JSON inválido.' });
+    if (error.type === 'entity.too.large') return res.status(413).json({ error: 'El contenido excede el límite permitido.' });
+    if ([400, 401, 403, 409, 429, 503].includes(error.status)) {
+      if (error.status === 429) res.set('Retry-After', '900');
+      if (error.status === 503) res.set('Retry-After', '5');
+      return res.status(error.status).json({ error: error.message });
+    }
+    if (error.code === '23503') return res.status(400).json({ error: 'El mazo o la etiqueta indicada ya no existe.' });
+    console.error('Error de API:', error.code || 'INTERNAL_ERROR');
+    res.status(500).json({ error: 'No se pudo completar la operación.' });
+  });
+  app.locals.auth = auth;
+  return app;
+}
+
+async function start() {
+  const db = createDatabase();
+  let cleanupTimer;
+  try {
+    const app = createApp(db);
+    await db.initialize();
+    const port = Number(process.env.PORT || 3000);
+    const host = process.env.HOST || '127.0.0.1';
+    await app.locals.auth.cleanup();
+    cleanupTimer = setInterval(() => app.locals.auth.cleanup().catch((error) => console.error('Error limpiando sesiones:', error.code || 'INTERNAL_ERROR')), 15 * 60 * 1000);
+    cleanupTimer.unref();
+    const server = await new Promise((resolve, reject) => {
+      const listener = app.listen(port, host, () => resolve(listener));
+      listener.once('error', reject);
+    });
+    console.log(`Flash Cards corriendo en http://${host}:${port}`);
+    let closing = false;
+    const shutdown = () => {
+      if (closing) return;
+      closing = true;
+      clearInterval(cleanupTimer);
+      const timeout = setTimeout(() => process.exit(1), 10000);
+      timeout.unref();
+      server.close(async () => {
+        await db.end();
+        clearTimeout(timeout);
+      });
+    };
+    process.once('SIGINT', shutdown);
+    process.once('SIGTERM', shutdown);
+    return { server, db };
+  } catch (error) {
+    clearInterval(cleanupTimer);
+    await db.end();
+    throw error;
   }
 }
 
-function withTags(cards) {
-  if (cards.length === 0) return cards;
-
-  const placeholders = cards.map(() => '?').join(', ');
-  const rows = db.prepare(`
-    SELECT ct.card_id, t.id, t.name
-    FROM card_tags ct
-    JOIN tags t ON t.id = ct.tag_id
-    WHERE ct.card_id IN (${placeholders})
-    ORDER BY t.name COLLATE NOCASE
-  `).all(...cards.map((card) => card.id));
-
-  const tagsByCard = new Map();
-  for (const row of rows) {
-    if (!tagsByCard.has(row.card_id)) tagsByCard.set(row.card_id, []);
-    tagsByCard.get(row.card_id).push({ id: row.id, name: row.name });
-  }
-
-  return cards.map((card) => ({ ...card, tags: tagsByCard.get(card.id) || [] }));
+if (require.main === module) {
+  start().catch((error) => {
+    if (error.code === 'EADDRINUSE') {
+      const port = process.env.PORT || 3000;
+      console.error(`El puerto ${port} ya está en uso. Detén la instancia anterior de la aplicación o configura otro PORT en .env.`);
+    } else {
+      console.error(error.code ? `No se pudo iniciar la aplicación (${error.code}). Comprueba PostgreSQL y la configuración del servidor.` : error.message);
+    }
+    process.exitCode = 1;
+  });
 }
 
-// ---------- Decks ----------
-
-app.get('/api/decks', (req, res) => {
-  const decks = db.prepare(`
-    SELECT d.id, d.name, d.created_at, COUNT(c.id) AS card_count
-    FROM decks d
-    LEFT JOIN cards c ON c.deck_id = d.id
-    GROUP BY d.id
-    ORDER BY d.name COLLATE NOCASE
-  `).all();
-  res.json(decks);
-});
-
-app.post('/api/decks', (req, res) => {
-  const name = (req.body.name || '').trim();
-  if (!name) return res.status(400).json({ error: 'El nombre del mazo es obligatorio.' });
-  try {
-    const info = db.prepare('INSERT INTO decks (name) VALUES (?)').run(name);
-    const deck = db.prepare('SELECT id, name, created_at, 0 AS card_count FROM decks WHERE id = ?').get(info.lastInsertRowid);
-    res.status(201).json(deck);
-  } catch (err) {
-    if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-      return res.status(409).json({ error: 'Ya existe un mazo con ese nombre.' });
-    }
-    res.status(500).json({ error: 'No se pudo crear el mazo.' });
-  }
-});
-
-app.put('/api/decks/:id', (req, res) => {
-  const name = (req.body.name || '').trim();
-  if (!name) return res.status(400).json({ error: 'El nombre del mazo es obligatorio.' });
-  const existing = db.prepare('SELECT id FROM decks WHERE id = ?').get(req.params.id);
-  if (!existing) return res.status(404).json({ error: 'Mazo no encontrado.' });
-  try {
-    db.prepare('UPDATE decks SET name = ? WHERE id = ?').run(name, req.params.id);
-    res.json(db.prepare('SELECT id, name, created_at FROM decks WHERE id = ?').get(req.params.id));
-  } catch (err) {
-    if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-      return res.status(409).json({ error: 'Ya existe un mazo con ese nombre.' });
-    }
-    res.status(500).json({ error: 'No se pudo renombrar el mazo.' });
-  }
-});
-
-app.delete('/api/decks/:id', (req, res) => {
-  const id = Number(req.params.id);
-  const deckCount = db.prepare('SELECT COUNT(*) AS n FROM decks').get().n;
-  if (deckCount <= 1) {
-    return res.status(400).json({ error: 'Debe existir al menos un mazo.' });
-  }
-  const existing = db.prepare('SELECT id FROM decks WHERE id = ?').get(id);
-  if (!existing) return res.status(404).json({ error: 'Mazo no encontrado.' });
-  db.prepare('DELETE FROM decks WHERE id = ?').run(id);
-  res.status(204).end();
-});
-
-// ---------- Cards ----------
-
-app.get('/api/tags', (req, res) => {
-  const tags = db.prepare(`
-    SELECT t.id, t.name, COUNT(ct.card_id) AS card_count
-    FROM tags t
-    LEFT JOIN card_tags ct ON ct.tag_id = t.id
-    GROUP BY t.id
-    ORDER BY t.name COLLATE NOCASE
-  `).all();
-  res.json(tags);
-});
-
-app.post('/api/tags', (req, res) => {
-  let tags;
-  try {
-    tags = normalizeTags([req.body.name]);
-  } catch (err) {
-    return res.status(400).json({ error: err.message });
-  }
-  if (tags.length !== 1) {
-    return res.status(400).json({ error: 'El nombre de la etiqueta es obligatorio.' });
-  }
-
-  try {
-    const info = db.prepare('INSERT INTO tags (name) VALUES (?)').run(tags[0]);
-    res.status(201).json({ id: info.lastInsertRowid, name: tags[0], card_count: 0 });
-  } catch (err) {
-    if (err.code === 'SQLITE_CONSTRAINT_UNIQUE') {
-      return res.status(409).json({ error: 'Ya existe una etiqueta con ese nombre.' });
-    }
-    res.status(500).json({ error: 'No se pudo crear la etiqueta.' });
-  }
-});
-
-app.get('/api/cards', (req, res) => {
-  const { deck_id, tag_id, q } = req.query;
-  let sql = 'SELECT c.* FROM cards c WHERE 1=1';
-  const params = [];
-  if (deck_id) {
-    sql += ' AND c.deck_id = ?';
-    params.push(deck_id);
-  }
-  if (tag_id) {
-    sql += ' AND EXISTS (SELECT 1 FROM card_tags ct WHERE ct.card_id = c.id AND ct.tag_id = ?)';
-    params.push(tag_id);
-  }
-  if (q) {
-    sql += ` AND (
-      c.question LIKE ? OR c.answer LIKE ? OR
-      EXISTS (
-        SELECT 1 FROM card_tags ct
-        JOIN tags t ON t.id = ct.tag_id
-        WHERE ct.card_id = c.id AND t.name LIKE ?
-      )
-    )`;
-    const like = `%${q}%`;
-    params.push(like, like, like);
-  }
-  sql += ' ORDER BY c.created_at DESC';
-  res.json(withTags(db.prepare(sql).all(...params)));
-});
-
-app.post('/api/cards', (req, res) => {
-  const question = (req.body.question || '').trim();
-  const answer = (req.body.answer || '').trim();
-  let deckId = req.body.deck_id;
-  let tags;
-
-  try {
-    tags = normalizeTags(req.body.tags) || [];
-  } catch (err) {
-    return res.status(400).json({ error: err.message });
-  }
-
-  if (!question || !answer) {
-    return res.status(400).json({ error: 'La pregunta y la respuesta son obligatorias.' });
-  }
-  if (!deckId) {
-    deckId = db.prepare('SELECT id FROM decks ORDER BY id LIMIT 1').get().id;
-  }
-  const deck = db.prepare('SELECT id FROM decks WHERE id = ?').get(deckId);
-  if (!deck) return res.status(400).json({ error: 'El mazo indicado no existe.' });
-
-  const createCard = db.transaction(() => {
-    const info = db.prepare('INSERT INTO cards (deck_id, question, answer) VALUES (?, ?, ?)').run(deckId, question, answer);
-    replaceCardTags(info.lastInsertRowid, tags);
-    return info.lastInsertRowid;
-  });
-  const cardId = createCard();
-  res.status(201).json(withTags([db.prepare('SELECT * FROM cards WHERE id = ?').get(cardId)])[0]);
-});
-
-app.put('/api/cards/:id', (req, res) => {
-  const existing = db.prepare('SELECT * FROM cards WHERE id = ?').get(req.params.id);
-  if (!existing) return res.status(404).json({ error: 'Tarjeta no encontrada.' });
-
-  const question = (req.body.question ?? existing.question).trim();
-  const answer = (req.body.answer ?? existing.answer).trim();
-  const deckId = req.body.deck_id ?? existing.deck_id;
-  let tags;
-
-  try {
-    tags = normalizeTags(req.body.tags);
-  } catch (err) {
-    return res.status(400).json({ error: err.message });
-  }
-
-  if (!question || !answer) {
-    return res.status(400).json({ error: 'La pregunta y la respuesta son obligatorias.' });
-  }
-  const deck = db.prepare('SELECT id FROM decks WHERE id = ?').get(deckId);
-  if (!deck) return res.status(400).json({ error: 'El mazo indicado no existe.' });
-
-  const updateCard = db.transaction(() => {
-    db.prepare(`
-      UPDATE cards SET question = ?, answer = ?, deck_id = ?, updated_at = datetime('now')
-      WHERE id = ?
-    `).run(question, answer, deckId, req.params.id);
-    if (tags !== undefined) replaceCardTags(existing.id, tags);
-  });
-  updateCard();
-
-  res.json(withTags([db.prepare('SELECT * FROM cards WHERE id = ?').get(req.params.id)])[0]);
-});
-
-app.delete('/api/cards/:id', (req, res) => {
-  const existing = db.prepare('SELECT id FROM cards WHERE id = ?').get(req.params.id);
-  if (!existing) return res.status(404).json({ error: 'Tarjeta no encontrada.' });
-  db.prepare('DELETE FROM cards WHERE id = ?').run(req.params.id);
-  res.status(204).end();
-});
-
-app.listen(PORT, () => {
-  console.log(`Flash Cards corriendo en http://localhost:${PORT}`);
-});
+module.exports = { createApp, start };

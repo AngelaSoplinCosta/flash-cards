@@ -3,3 +3,8 @@ data/
 public/vendor/
 npm-debug.log*
 .DS_Store
+.env
+.env.*
+!.env.example
+*.crt
+*.pem
