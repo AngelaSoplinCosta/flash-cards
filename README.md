@@ -27,7 +27,7 @@ La contraseña del ejemplo es exclusivamente para desarrollo local. Los datos se
 No uses `docker compose down -v` si quieres conservar ese volumen.
 
 El servidor carga `.env` con dotenv. Las variables definidas por el alojamiento tienen prioridad.
-Si no existe `DATABASE_URL`, el inicio falla con un mensaje explicativo; no vuelve a SQLite.
+Si no existe `DATABASE_URL`, el inicio falla con un mensaje explicativo.
 
 | Variable | Uso |
 | --- | --- |
@@ -35,45 +35,6 @@ Si no existe `DATABASE_URL`, el inicio falla con un mensaje explicativo; no vuel
 | `HOST` | Por defecto `127.0.0.1`; en Render configura `0.0.0.0`. |
 | `PORT` | Por defecto 3000; en Render utiliza su variable suministrada. |
 | `TEST_DATABASE_URL` | Conexión explícita a PostgreSQL local para las pruebas de integración. |
-
-## Migrar tus tarjetas de SQLite
-
-Conserva `data/flashcards.db` hasta comprobar la importación. Instala las dependencias de desarrollo en la computadora desde la que importes: `better-sqlite3` se utiliza solo en este comando y en pruebas, no en el servidor PostgreSQL.
-
-Primero revisa el origen sin conectar ni modificar PostgreSQL:
-
-```powershell
-pnpm.cmd db:import-sqlite --dry-run
-```
-
-Después, con `DATABASE_URL` apuntando al destino correcto y el servidor de la aplicación detenido:
-
-```powershell
-pnpm.cmd db:import-sqlite
-pnpm.cmd start
-```
-
-Para importar otro archivo:
-
-```powershell
-pnpm.cmd db:import-sqlite "C:/ruta/flashcards.db" --dry-run
-pnpm.cmd db:import-sqlite "C:/ruta/flashcards.db"
-```
-
-La importación:
-
-- Abre SQLite en modo de solo lectura y toma una instantánea transaccional consistente.
-- Verifica integridad y compatibilidad de IDs, fechas y texto.
-- Importa mazos, tarjetas, etiquetas y asociaciones en una sola transacción PostgreSQL.
-- Conserva IDs y Markdown; interpreta las fechas SQLite sin zona horaria como UTC.
-- Compara todo el contenido importado y ajusta las secuencias para futuras inserciones.
-- Rechaza destinos con datos. Solo admite una base vacía o el mazo inicial General sin tarjetas ni etiquetas.
-- Revierte los datos importados si falla. La preparación del esquema puede permanecer aplicada.
-- No modifica ni elimina el archivo SQLite original.
-
-El dry-run comprueba únicamente el origen. Los permisos, la conexión y las restricciones del destino se verifican durante la importación real.
-Haz la importación antes de usar la aplicación con PostgreSQL: el comando está diseñado para una migración inicial, no para sincronización continua.
-Detén la aplicación durante este procedimiento.
 
 ## PostgreSQL en Supabase
 
@@ -83,7 +44,7 @@ Para el proceso completo, consulta la [guía de despliegue en Supabase y Render]
 2. Copia la conexión PostgreSQL al `DATABASE_URL` de tu `.env` o del alojamiento. Utiliza el puerto de session pooler indicado por Supabase; el ejemplo habitual es 5432.
 3. Sustituye la contraseña y codifica sus caracteres especiales para una URL.
 4. Configura TLS con verificación de certificado. Descarga el certificado CA del proyecto y añade a la URL `sslmode=verify-full&sslrootcert=C:/ruta/supabase-ca.crt` (en Linux, utiliza su ruta local).
-5. Ejecuta `pnpm.cmd db:migrate` para una instalación vacía o `pnpm.cmd db:import-sqlite` para transferir tu colección.
+5. Ejecuta `pnpm.cmd db:migrate` para preparar el esquema de una instalación nueva. Este comando no transfiere colecciones entre bases.
 
 El backend utiliza `pg` con un pool de hasta cinco conexiones. No envíes `DATABASE_URL`, contraseñas o certificados privados a `public/`.
 El esquema de la aplicación es `flashcards`, separado de `public`; no lo añadas a los esquemas expuestos por la Data API de Supabase.
@@ -100,7 +61,7 @@ Cada cuenta recibe un mazo General privado. Todas las rutas de datos exigen sesi
 
 ### Conservar tu colección anterior
 
-Importa SQLite antes de crear cuentas. Los mazos y etiquetas anteriores se conservan sin propietario y no aparecen en la web hasta asignarlos. Después de registrar tu cuenta, detén el servidor y ejecuta:
+Si una base PostgreSQL anterior a la autenticación contiene mazos y etiquetas sin propietario, estos no aparecen en la web hasta asignarlos. Después de registrar tu cuenta, detén el servidor y ejecuta:
 
 ```powershell
 pnpm.cmd auth:claim-legacy tu_usuario
@@ -130,7 +91,7 @@ Referencias: [conexiones Supabase](https://supabase.com/docs/guides/database/con
 
 Las tablas `flashcards.decks`, `flashcards.cards`, `flashcards.tags` y `flashcards.card_tags` conservan las claves foráneas, el borrado en cascada y los índices.
 Los IDs y conteos siguen siendo números en la API; las fechas se devuelven en ISO 8601 UTC.
-Las etiquetas conservan la comparación histórica de SQLite NOCASE: las letras ASCII no distinguen mayúsculas, mientras que los acentos se mantienen.
+En las etiquetas, las letras ASCII no distinguen mayúsculas, mientras que los acentos se mantienen.
 La búsqueda de tarjetas utiliza `ILIKE`.
 
 Los archivos numerados en `migrations/` se aplican una vez y quedan registrados en `flashcards.schema_migrations`.
@@ -151,11 +112,11 @@ pnpm.cmd test
 
 Las pruebas crean una base temporal con nombre aleatorio, prueban la API HTTP con PostgreSQL real y eliminan únicamente esa base al terminar.
 La cuenta local necesita permisos de creación de bases.
-No se modifica tu base `flashcards` ni tu archivo SQLite.
+No se modifica tu base personal `flashcards`.
 Sin `TEST_DATABASE_URL`, la prueba de integración aparece como omitida; no implica que PostgreSQL haya sido verificado.
 Las pruebas rechazan conexiones a hosts remotos.
 
-Se verifican CRUD, filtros, tipos JSON, errores, transacciones, concurrencia, borrados en cascada, protección del último mazo, migración fiel de contenido/secuencias, hashes, sesiones falsas/expiradas/revocadas, aislamiento entre cuentas, CSRF, cookies de producción y límites persistentes entre instancias.
+Se verifican CRUD, filtros, tipos JSON, errores, transacciones, concurrencia, borrados en cascada, protección del último mazo, asignación de colecciones anteriores, hashes, sesiones falsas/expiradas/revocadas, aislamiento entre cuentas, CSRF, cookies de producción y límites persistentes entre instancias.
 
 ## Funcionalidades
 
@@ -170,4 +131,3 @@ Se verifican CRUD, filtros, tipos JSON, errores, transacciones, concurrencia, bo
 
 - Backend: Node.js, Express, PostgreSQL (`pg`) y dotenv.
 - Frontend: HTML/CSS/JS, `marked` y DOMPurify servidos localmente.
-- SQLite (`better-sqlite3`): únicamente herramienta de importación y pruebas.

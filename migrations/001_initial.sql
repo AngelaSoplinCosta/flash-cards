@@ -19,7 +19,7 @@ CREATE TABLE flashcards.tags (
   created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Preserve SQLite NOCASE semantics: ASCII case folding, without changing accents.
+-- ASCII case folding, without changing accents.
 CREATE UNIQUE INDEX idx_tags_name_nocase ON flashcards.tags (
   translate(name, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz')
 );

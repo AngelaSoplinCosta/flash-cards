@@ -1,17 +1,12 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { once } = require('node:events');
-const { randomBytes, createHash } = require('node:crypto');
-const fs = require('node:fs');
-const os = require('node:os');
-const path = require('node:path');
+const { randomBytes } = require('node:crypto');
 const { Pool } = require('pg');
-const SQLite = require('better-sqlite3');
 const { createDatabase } = require('../db');
 const { createApp } = require('../server');
 const { createRepository } = require('../repository');
 const { claimLegacy } = require('../scripts/claim-legacy');
-const { readSnapshot, importSnapshot } = require('../scripts/import-sqlite');
 
 test('DATABASE_URL es obligatoria', () => {
   assert.throws(() => createDatabase(''), /Falta DATABASE_URL/);
@@ -268,7 +263,6 @@ test('Integración con PostgreSQL real', { skip: !testUrl && 'Configura TEST_DAT
       assert.match(login.headers.get('set-cookie'), /^__Host-flashcards_session=/);
       assert.match(login.headers.get('set-cookie'), /; Secure;/);
       assert.match(login.headers.get('strict-transport-security'), /max-age=31536000/);
-      await assert.rejects(importSnapshot(db, { decks: [], cards: [], tags: [], card_tags: [] }), /contiene cuentas/);
     } finally { await new Promise((resolve) => { productionServer.close(resolve); productionServer.closeAllConnections(); }); }
   });
   await t.test('credenciales inválidas y fuerza bruta con límites persistentes', async () => {
@@ -293,67 +287,5 @@ test('Integración con PostgreSQL real', { skip: !testUrl && 'Configura TEST_DAT
     } finally { await new Promise((resolve) => { anotherServer.close(resolve); anotherServer.closeAllConnections(); }); }
     await db.query('UPDATE flashcards.auth_limits SET expires_at = CURRENT_TIMESTAMP - INTERVAL \'1 second\'');
     assert.equal((await securityRequest('/api/auth/login', 'POST', { username: 'unknown_user', password: 'incorrecta' })).status, 401);
-  });
-
-  // Import fixtures intentionally remain unowned until the local transfer command.
-  userId = null;
-  repo = createRepository(db, null);
-  await reset();
-  await db.query('DELETE FROM flashcards.users');
-
-  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'flashcards-import-test-'));
-  const fixturePath = path.join(tempDir, 'source.db');
-  t.after(() => {
-    fs.unlinkSync(fixturePath);
-    fs.rmdirSync(tempDir);
-  });
-  const sqlite = new SQLite(fixturePath);
-  sqlite.exec(`
-    PRAGMA foreign_keys = ON;
-    CREATE TABLE decks (id INTEGER PRIMARY KEY, name TEXT NOT NULL UNIQUE, created_at TEXT NOT NULL);
-    CREATE TABLE cards (id INTEGER PRIMARY KEY, deck_id INTEGER REFERENCES decks(id), question TEXT, answer TEXT, created_at TEXT, updated_at TEXT);
-    CREATE TABLE tags (id INTEGER PRIMARY KEY, name TEXT NOT NULL COLLATE NOCASE UNIQUE, created_at TEXT);
-    CREATE TABLE card_tags (card_id INTEGER REFERENCES cards(id), tag_id INTEGER REFERENCES tags(id), PRIMARY KEY(card_id, tag_id));
-    INSERT INTO decks VALUES (7, 'Español', '2026-01-01 12:34:56');
-    INSERT INTO cards VALUES (15, 7, '**¿Qué es SQL?**', '# Una base de datos.\nCódigo: SELECT 1;', '2026-01-01 12:34:56', '2026-01-02 13:00:00');
-    INSERT INTO tags VALUES (12, 'Nube', '2026-01-01 12:34:56');
-    INSERT INTO tags VALUES (20, 'área', '2026-01-01 12:34:56');
-    INSERT INTO tags VALUES (21, 'ÁREA', '2026-01-01 12:34:56');
-    INSERT INTO card_tags VALUES (15, 12);
-  `);
-  sqlite.close();
-  const digest = () => createHash('sha256').update(fs.readFileSync(fixturePath)).digest('hex');
-  const originalDigest = digest();
-
-  await t.test('importación conserva contenido, IDs, fechas, acentos y siguientes IDs', async () => {
-    await reset();
-    const snapshot = readSnapshot(fixturePath);
-    assert.equal(digest(), originalDigest);
-    assert.deepEqual(await importSnapshot(db, snapshot), { decks: 1, cards: 1, tags: 3, card_tags: 1 });
-    const card = (await repo.listCards({}))[0];
-    assert.equal(card.id, 15);
-    assert.equal(card.deck_id, 7);
-    assert.equal(card.question, '**¿Qué es SQL?**');
-    assert.equal(card.created_at.toISOString(), '2026-01-01T12:34:56.000Z');
-    assert.equal(card.updated_at.toISOString(), '2026-01-02T13:00:00.000Z');
-    assert.equal(card.tags[0].id, 12);
-    assert.equal((await repo.createDeck('Nuevo')).id, 8);
-    assert.equal((await repo.createTag('Nueva')).id, 22);
-    assert.equal((await repo.createCard({ deck_id: 7, question: 'Nueva', answer: 'Nueva', tags: [] })).id, 16);
-    await assert.rejects(importSnapshot(db, snapshot), /destino contiene datos/);
-    assert.equal((await repo.listCards({})).length, 2);
-    assert.equal(digest(), originalDigest);
-  });
-
-  await t.test('importación fallida revierte contenido y permite un nuevo intento', async () => {
-    await reset();
-    const snapshot = readSnapshot(fixturePath);
-    const invalid = structuredClone(snapshot);
-    invalid.card_tags[0].tag_id = 999999;
-    await assert.rejects(importSnapshot(db, invalid));
-    assert.equal((await repo.listDecks())[0].name, 'General');
-    assert.equal((await repo.listCards({})).length, 0);
-    assert.equal((await repo.listTags()).length, 0);
-    assert.deepEqual(await importSnapshot(db, snapshot), { decks: 1, cards: 1, tags: 3, card_tags: 1 });
   });
 });

@@ -47,27 +47,19 @@ Si definiste DATABASE_URL en el entorno de la terminal, ese valor tiene priorida
 
 `db.js` carga `.env` y configura `pg`; no hace falta modificar código para cambiar de servidor PostgreSQL. [Conexiones de Supabase](https://supabase.com/docs/guides/database/connecting-to-postgres), [TLS en node-postgres](https://node-postgres.com/features/ssl).
 
-## 3. Importar y comprobar tus tarjetas
+## 3. Comprobar tus tarjetas en Supabase
 
-Estado de esta sesión: la importación a Supabase ya se completó y verificó. No repitas el comando; continúa con la creación de tu cuenta y la asignación de la colección descritas más abajo. Los comandos siguientes quedan como referencia para una instalación nueva.
+La colección ya se transfirió y verificó, y confirmaste que aparece al iniciar sesión. Continúa con el despliegue de Render: no necesitas transferirla ni asignarla de nuevo. Los cambios nuevos se guardan en el PostgreSQL configurado en DATABASE_URL.
 
-Durante esta revisión comprobé que tu archivo SQLite y PostgreSQL local tienen el mismo contenido: 1 mazo, 8 tarjetas, 8 etiquetas y 16 asociaciones. Por eso puedes utilizar SQLite como origen para esta primera transferencia.
-
-Si editas o creas tarjetas en PostgreSQL antes de hacer la transferencia, SQLite no se actualizará. En ese caso hay que exportar la colección actual de PostgreSQL; no importes una copia antigua como si estuviera sincronizada.
-
-Con Supabase vacío y DATABASE_URL ya configurado:
+Para preparar el esquema de otra base PostgreSQL, ejecuta:
 
 ```powershell
-pnpm.cmd db:import-sqlite --dry-run
-pnpm.cmd db:import-sqlite
-pnpm.cmd start
+pnpm.cmd db:migrate
 ```
 
-El dry-run solo comprueba SQLite. La importación real conecta a Supabase, prepara el esquema y verifica todo el contenido transferido. No tienes que ejecutar `db:migrate` antes de importar.
+Este comando aplica migraciones; no copia datos entre bases. En tu base actual las migraciones ya están aplicadas.
 
-Si prefieres empezar sin tus tarjetas, ejecuta `pnpm.cmd db:migrate` en lugar de importar.
-
-Abre http://localhost:3000, crea tu cuenta y detén el servidor. Asigna la colección importada con `pnpm.cmd auth:claim-legacy tu_usuario`, vuelve a iniciar y comprueba que aparecen tus mazos y tarjetas. Haz la importación antes de registrar cuentas. En Supabase puedes usar el Table Editor seleccionando el esquema `flashcards`, o comprobar conteos con SQL Editor:
+Para revisar los conteos en SQL Editor:
 
 ```sql
 SELECT
@@ -78,8 +70,6 @@ SELECT
 ```
 
 Deja `flashcards` fuera de los esquemas expuestos por la Data API. La aplicación se conecta desde Express y no necesita esa API.
-
-Si aparece «El destino contiene datos», comprueba que el destino es el correcto y si ya fue importado. El comando rechaza repetir o sobrescribir una importación; no vacíes la base para resolver el mensaje.
 
 ## 4. Preparar acceso privado antes de Render
 
@@ -132,7 +122,7 @@ Antes de confirmar, asegúrate de que no se incluyan `.env`, certificados, respa
 | Instance Type | Free |
 | Health Check Path | `/` (comprueba el servidor; no verifica PostgreSQL) |
 
-El build instala dependencias de producción y ejecuta `postinstall` para copiar marked y DOMPurify a `public/vendor`. SQLite y su módulo nativo son dependencias de desarrollo y no se necesitan en Render. pnpm está disponible en el runtime Node de Render; el proyecto fija su versión mediante packageManager.
+El build instala dependencias de producción y ejecuta `postinstall` para copiar marked y DOMPurify a `public/vendor`. pnpm está disponible en el runtime Node de Render; el proyecto fija su versión mediante packageManager.
 
 El arranque de server.js aplica migraciones antes de abrir el puerto. Para este plan gratuito no necesitas un pre-deploy command; esa opción de Render corresponde a servicios de pago.
 
@@ -192,7 +182,7 @@ El servidor gratuito de Render se duerme tras 15 minutos sin tráfico y tarda ap
 | Error de certificado | Certificado CA y ruta de ese entorno; verify-full debe seguir activo |
 | `42501` | Permisos para crear y modificar el esquema flashcards |
 | «No open ports detected» | HOST=0.0.0.0 y PORT suministrado por Render |
-| No aparecen las tarjetas | Se importaron en otro destino, o se arrancó una base vacía sin importar |
+| No aparecen las tarjetas | DATABASE_URL apunta al destino correcto y los mazos pertenecen a tu cuenta |
 | Primera apertura lenta | El servicio gratuito de Render está despertando |
 
 ## Próximo paso de esta sesión
